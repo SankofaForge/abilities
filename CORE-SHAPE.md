@@ -13,7 +13,7 @@ This document is the source of truth for the shape of the core abilities: their 
 | [`core/users-query`](#coreusers-query) | Landed, [`39981fd0fe`](https://github.com/WordPress/wordpress-develop/commit/39981fd0fef) | user | `true` | `false` | `true` | `GET` |
 | [`core/user-create`](#coreuser-create) | Proposed | user | `false` | `false` | `false` | `POST` |
 | [`core/user-update`](#coreuser-update) | Proposed | user | `false` | `false` | `true` | `POST` |
-| [`core/user-delete`](#coreuser-delete) | Proposed | user | `false` | `true` | `true` | `DELETE` |
+| [`core/user-delete`](#coreuser-delete) | Proposed | user | `false` | `true` | `false` | `POST` |
 | [`core/media-query`](#coremedia-query) | Proposed | content | `true` | `false` | `true` | `GET` |
 | [`core/media-upload`](#coremedia-upload) | Proposed | content | `false` | `false` | `false` | `POST` |
 | [`core/media-update`](#coremedia-update) | Proposed | content | `false` | `false` | `true` | `POST` |
@@ -1150,6 +1150,8 @@ Errors are `WP_Error` objects. The `// Error` part of an example shows one as th
 
 - Default `fields`: `id, name, link, slug, avatar_urls`.
 - The input takes no `password`: WordPress generates one and emails the new user a link to set their own, the same email the Add User screen sends when "Send the new user an email about their account" is checked. The site admin gets the usual new user notice.
+- `roles` is optional. Without it the new user gets the site's default role, the "New User Default Role" setting. On multisite there is no default: the user becomes a member of the current site with no role.
+- `email` takes up to 100 characters and `name` up to 250, the sizes of their database columns.
 
 **Example 1:** an editor with chosen fields
 
@@ -1228,8 +1230,8 @@ Errors are `WP_Error` objects. The `// Error` part of an example shows one as th
       "required": [ "username", "email" ],
       "properties": {
         "username":    { "type": "string", "minLength": 1 },
-        "email":       { "type": "string", "format": "email" },
-        "name":        { "type": "string", "minLength": 1 },
+        "email":       { "type": "string", "format": "email", "maxLength": 100 },
+        "name":        { "type": "string", "minLength": 1, "maxLength": 250 },
         "first_name":  { "type": "string" },
         "last_name":   { "type": "string" },
         "nickname":    { "type": "string", "minLength": 1 },
@@ -1368,8 +1370,8 @@ Errors are `WP_Error` objects. The `// Error` part of an example shows one as th
       "additionalProperties": false,
       "minProperties": 1,
       "properties": {
-        "email":       { "type": "string", "format": "email" },
-        "name":        { "type": "string", "minLength": 1 },
+        "email":       { "type": "string", "format": "email", "maxLength": 100 },
+        "name":        { "type": "string", "minLength": 1, "maxLength": 250 },
         "first_name":  { "type": "string" },
         "last_name":   { "type": "string" },
         "nickname":    { "type": "string", "minLength": 1 },
@@ -1448,8 +1450,15 @@ Errors are `WP_Error` objects. The `// Error` part of an example shows one as th
 
 ### `core/user-delete`
 
-- `reassign` is required: the ID of the user who takes over the deleted user's content, or `false` to reassign nothing. With `false` the user's content is removed as well, as "Delete all content" does on the Users screen (posts and pages go to the trash); send it too when the user has no content. `true` is rejected.
+- `reassign` is required: the ID of the user who takes over the deleted user's content, or `false` to reassign nothing. Send `false` too when the user has no content. `true` is rejected.
+- With a user ID, every post of the deleted user, of any post type, moves to that user, and so do their links.
+- With `false`, the user's content is deleted with the account, as "Delete all content" does on the Users screen:
+  - Posts and pages go to the trash. One that is already in the trash is deleted permanently, and so are all of them on a site with the trash turned off.
+  - Media and posts of other post types are deleted permanently. Media goes to the trash only where `MEDIA_TRASH` is on.
+  - Links are deleted.
+  - Posts of a post type that is not deleted with its author, such as patterns, stay as they are.
 - On multisite the user is removed from the current site instead, as "Remove" does on the site's Users screen: `outcome` is `removed` and the account stays in the network. There, `reassign: false` leaves the user's content in place; a user ID still reassigns it.
+- `idempotent` is `false`: once the user is deleted or removed, the same call answers `user_not_found` with status 404. So the REST method is `POST`, with the input in the body.
 
 **Example 1:** deleting a user and handing their posts to user 7
 
@@ -1458,7 +1467,8 @@ Errors are `WP_Error` objects. The `// Error` part of an example shows one as th
 { "where": { "id": 42 }, "reassign": 7 }
 
 // Over REST
-// DELETE /wp-json/wp-abilities/v1/abilities/core/user-delete/run?input[where][id]=42&input[reassign]=7
+// POST /wp-json/wp-abilities/v1/abilities/core/user-delete/run
+{ "input": { "where": { "id": 42 }, "reassign": 7 } }
 
 // Output
 { "outcome": "deleted" }
